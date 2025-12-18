@@ -1,0 +1,14 @@
+[project]
+name = "auto-upgrader"
+version = "0.1.0"
+description = "Agentic dependency upgrader using MCP and LangGraph"
+requires-python = ">=3.11"
+dependencies = [
+    "langchain",
+    "langgraph",
+    "langchain-ollama",
+    "langchain-mcp-adapters",
+    "fastmcp",  # Simplifies creating the Docker MCP server
+    "docker",   # Python Docker client
+    "python-dotenv>=1.2.1",
+]
