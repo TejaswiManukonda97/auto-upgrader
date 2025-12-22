@@ -1,2 +1,5 @@
 .env
 workspace_mount/
+git_mcp_tools/
+.venv/
+pycache/
