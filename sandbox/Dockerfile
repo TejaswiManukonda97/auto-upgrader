@@ -4,6 +4,8 @@ FROM python:3.11-slim
 # Install system dependencies (Git, build tools)
 RUN apt-get update && apt-get install -y \
     git \
+    bash \
+    curl \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 

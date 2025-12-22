@@ -204,6 +204,50 @@ def list_outdated_packages(package_name: str = "") -> str:
         return f"Error: {e}"
 
 @mcp.tool
+def git_clone(repo_url: str = "") -> str:
+    """
+    Clones the repository into the current workspace.
+    WARNING: This deletes all existing files in the workspace to ensure a clean clone.
+    
+    Args:
+        repo_url: Optional. If not provided, constructs URL from env vars.
+    """
+    if not GITHUB_TOKEN: return "Error: GITHUB_TOKEN not set."
+    
+    # 1. Construct URL if missing
+    if not repo_url:
+        # Use the env vars defined at the top of server.py
+        repo_url = f"https://github.com/{REPO_OWNER}/{REPO_NAME}.git"
+    
+    # 2. Inject Token for Authentication
+    if "https://" in repo_url:
+        auth_url = repo_url.replace("https://", f"https://{GITHUB_TOKEN}@")
+    else:
+        auth_url = repo_url # Fallback, likely won't work for private repos without https
+
+    container = _get_container()
+    _setup_git_config(container)
+    
+    try:
+        # 3. CLEANUP: Delete existing files to allow 'git clone .' to work
+        # Safety: We strictly perform this inside /workspace
+        clean_cmd = "find . -mindepth 1 -delete" 
+        container.exec_run(f"bash -c '{clean_cmd}'", workdir="/workspace")
+
+        # 4. CLONE
+        # We clone into '.' (current dir) because the mount is the root of the project
+        clone_cmd = f"git clone {auth_url} ." 
+        res = container.exec_run(f"bash -c '{clone_cmd}'", workdir="/workspace")
+        
+        if res.exit_code != 0:
+            return f"Git Clone Failed: {res.output.decode('utf-8')}"
+            
+        return f"Success: Repository cloned. \nOutput: {res.output.decode('utf-8')}"
+
+    except Exception as e:
+        return f"Error during clone: {e}"
+    
+@mcp.tool
 def git_create_branch(branch_name: str) -> str:
     """Creates and switches to a new git branch. Verifies the switch."""
     container = _get_container()

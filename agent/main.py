@@ -38,14 +38,16 @@ TOOL_MAPPING = {
     "push": "git_push",
     "pr": "create_github_pr",
     "outdated": "list_outdated_packages",
-    "check_updates": "list_outdated_packages"
+    "check_updates": "list_outdated_packages",
+    "clone": "git_clone", 
+    "git_clone": "git_clone"
 }
 
 ALLOWED_TOOLS = {
     "run_shell_command", "read_file", "write_file", "list_files", "replace_in_file", 
-    "git_create_branch", "git_commit", "git_push", "create_github_pr", "list_outdated_packages",
+    "git_create_branch", "git_commit", "git_push", "create_github_pr", "list_outdated_packages", "git_clone"
     "run_command", "cmd", "read", "write", "save", "replace", "edit", "update", "edit_file", "create",
-    "branch", "commit", "push", "pr", "outdated", "check_updates"
+    "branch", "commit", "push", "pr", "outdated", "check_updates", "clone"
 }
 
 class AgentState(TypedDict):
@@ -159,6 +161,20 @@ async def main():
 
             if last_msg.tool_calls:
                 for tool in last_msg.tool_calls:
+                    if tool["name"] in ["run_shell_command", "cmd", "run_command"]:
+                        cmd = tool["args"].get("command", "").lower().strip()
+                        forbidden = ["nano ", "vim ", "vi ", "emacs ", "less ", "more ", "git log"]
+                        if any(cmd.startswith(f) or f" {f.strip()}" in cmd for f in forbidden):
+                            return {
+                                "messages": [HumanMessage(content=
+                                    f"STOP. You are trying to use an interactive CLI tool ('{cmd}'). "
+                                    "This environment DOES NOT support interactive text editors. "
+                                    "You are blind to the terminal screen. "
+                                    "Action: Use 'replace_in_file' or 'write_file' to edit files programmatically."
+                                )],
+                                "retry_count": state["retry_count"]
+                            }
+                        
                     if tool["name"] in ["write_file", "write"]:
                         content = tool["args"].get("content", "").lower()
                         suspicious_keywords = ["calculate_total", "price * quantity", "foo", "bar", "baz", "john doe"]
@@ -214,6 +230,19 @@ async def main():
                 # --- Git Tool Fixes ---
                 if "branch" in tool_args: tool_args["branch_name"] = tool_args.pop("branch")
                 if "name" in tool_args and "branch" in tool_name: tool_args["branch_name"] = tool_args.pop("name")
+                if "repo_url" in tool_args: tool_args["repo_url"] = tool_args.pop("repo_url")
+
+                # <--- Git Clone Argument Fixes --->
+                if tool_name == "git_clone":
+                    # If agent passes 'url' instead of 'repo_url'
+                    if "url" in tool_args: tool_args["repo_url"] = tool_args.pop("url")
+                    # If agent passes 'repo' instead of 'repo_url'
+                    if "repo" in tool_args: tool_args["repo_url"] = tool_args.pop("repo")
+                
+                if tool_name == "git_push":
+                    tool_args.pop("remote_name", None)
+                    tool_args.pop("remote", None)
+                    tool_args.pop("origin", None)
 
                 # --- Find/Replace Aliases ---
                 if "search" in tool_args: tool_args["find"] = tool_args.pop("search")
@@ -227,8 +256,10 @@ async def main():
                 if "new" in tool_args: tool_args["replace"] = tool_args.pop("new")
                 if "new_line" in tool_args: tool_args["replace"] = tool_args.pop("new_line")
                 if "replacement" in tool_args: tool_args["replace"] = tool_args.pop("replacement")
+                if "replacement_string" in tool_args: tool_args["replace"] = tool_args.pop("replacement_string")
+                if 'search_string' in tool_args: tool_args["find"] = tool_args.pop("search_string")
 
-                # --- PR Aliases (THE FIX) ---
+                # --- PR Aliases ---
                 # Fixes pr_title -> title
                 if "pr_title" in tool_args: tool_args["title"] = tool_args.pop("pr_title")
                 if "name" in tool_args and tool_name == "create_github_pr": tool_args["title"] = tool_args.pop("name")
@@ -246,6 +277,8 @@ async def main():
 
                 # INJECT DEFAULTS (Safety Net)
                 if tool_name == "create_github_pr":
+                    tool_args.pop("repo_name", None)
+                    tool_args.pop("repo", None)
                     if "title" not in tool_args:
                         tool_args["title"] = "Automated Library Upgrade"
                     if "body" not in tool_args:
@@ -263,6 +296,17 @@ async def main():
                 # =========================================================
                 logger.info(f"> Action: {tool_name}")
                 
+                if tool_name == "run_shell_command":
+                    cmd = tool_args.get("command", "")
+                    if "nano" in cmd or "vim" in cmd:
+                        results.append({
+                            "role": "tool", 
+                            "name": original_name, 
+                            "tool_call_id": tool_call["id"], 
+                            "content": "Error: Forbidden command. Use 'write_file' or 'replace_in_file' to edit."
+                        })
+                        continue
+                    
                 if tool_name == "write_file":
                     content = tool_args.get("content", "").strip()
                     if len(content) < 10 or "..." in content:
@@ -333,13 +377,16 @@ async def main():
             
             "CRITICAL RULES:"
             "1. HANDLE TEST FAILURES: If 'run_shell_command' returns 'Exit Code 1', DO NOT COMMIT. Fix first."
-            "2. NO GHOST UPGRADES: You must physically edit/create 'requirements.txt'."
-            "3. IGNORE GIT PUSH OUTPUT: The 'git_push' tool returns a URL ending in '/pull/new/...'. "
+            "2. NO INTERACTIVE TOOLS: NEVER use 'nano', 'vim', 'less', or 'git log'. You cannot interact with a TUI."
+            "   - To edit: Use 'replace_in_file' or 'write_file'."
+            "   - To view: Use 'read_file'."
+            "3. NO GHOST UPGRADES: You must physically edit/create 'requirements.txt'."
+            "4. IGNORE GIT PUSH OUTPUT: The 'git_push' tool returns a URL ending in '/pull/new/...'. "
             "   THIS IS NOT A VALID PR. It is just a suggestion."
             "   YOU MUST EXECUTE 'create_github_pr' to actually create the PR."
             "   Your final output must be the URL returned by 'create_github_pr', NOT 'git_push'."
-            "3. IDEMPOTENCY: If 'create_github_pr' says 'PR already exists', treat it as Success."
-            "4. NEVER push to 'main'."
+            "5. IDEMPOTENCY: If 'create_github_pr' says 'PR already exists', treat it as Success."
+            "6. NEVER push to 'main'."
 
             "CRITICAL ABORT CONDITIONS:\n"
             "1. IF you see 'fatal: not a git repository': STOP.\n"
@@ -349,19 +396,22 @@ async def main():
         user_task = (
             "Project mounted at '/workspace'. "
             "GOAL: Upgrade the 'requests' library to the latest version and ensure the app is stable."
-            
+    
             "EXECUTION PLAN:"
-            "1. DISCOVER: Check which version is currently installed."
-            "2. UPGRADE: Edit 'requirements.txt' to pin the NEW version. If the file is missing, CREATE it."
-            "3. STABILITY LOOP: Run tests ('pytest')."
+            "1. INITIALIZE: Run 'git_clone' to pull the repo into the workspace. (Do not provide a URL, I will use env vars)."
+            "2. SETUP BRANCH: Create a new branch 'feat/upgrade-deps' immediately after cloning."
+            "3. DISCOVER: Check which version is currently installed."
+            "4. UPGRADE: Edit 'requirements.txt' to pin the NEW version."
+            "5. STABILITY LOOP: Run tests ('pytest')."
             "   - IF FAIL: Fix the application code."
             "   - REPEAT until tests pass."
-            "4. FINALIZE: Create a PR only when tests pass."
+            "6. FINALIZE: Create a PR only when tests pass."
 
             "SUCCESS CRITERIA:"
-            "1. 'requests' version is updated in requirements.txt."
-            "2. 'pytest' passes with Exit Code 0."
-            "3. A Pull Request is created on GitHub."
+            "1. Repository is cloned."
+            "2. 'requests' version is updated."
+            "3. 'pytest' passes with Exit Code 0."
+            "4. A Pull Request is created on GitHub."
 
             "IMPORTANT: Do not stop at Step 2. You must execute Step 3."
         )
