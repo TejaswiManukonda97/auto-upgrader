@@ -14,7 +14,7 @@ Built using **LangGraph**, **Ollama (Llama 3.1)**, **Model Context Protocol (MCP
 * **Smart Argument Parsing**: Includes a custom translation layer that handles LLM hallucinations (e.g., fixing `pr_title` vs `title` or correcting `git commit` usage).
 * **Idempotency**: Handles duplicate PR creation and branch switching gracefully.
 
-## 🏗 Architecture
+## Architecture
 
 The system is divided into two main components:
 
@@ -39,7 +39,7 @@ The system is divided into two main components:
     ```
 * **GitHub Token** with `repo` permissions.
 
-## 🛠️ Installation
+## Installation
 
 1.  **Clone this repository:**
     ```bash
